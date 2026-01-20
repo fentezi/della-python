@@ -15,8 +15,27 @@ from della.config import Config
 from della.errors import BrowserError, InvalidCredentialsError
 
 
+def get_browsers_path() -> str:
+    """Get persistent path for Playwright browsers."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        return os.path.join(base, "della", "playwright-browsers")
+    elif sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Caches/della/playwright-browsers")
+    else:
+        return os.path.expanduser("~/.cache/della/playwright-browsers")
+
+
+def setup_browser_path() -> None:
+    """Set up PLAYWRIGHT_BROWSERS_PATH environment variable."""
+    browsers_path = get_browsers_path()
+    os.makedirs(browsers_path, exist_ok=True)
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
+
+
 def install_browsers() -> None:
     """Install Playwright browsers if not present."""
+    setup_browser_path()
     try:
         from playwright._impl._driver import compute_driver_executable
         driver_executable = compute_driver_executable()
@@ -95,6 +114,9 @@ class PlaywrightClient:
         """Start browser and navigate to URL."""
         self._profile_dir = self._get_profile_path()
         self._ensure_profile_dir()
+
+        # Set up browser path before starting Playwright
+        setup_browser_path()
 
         self._playwright = sync_playwright().start()
 
