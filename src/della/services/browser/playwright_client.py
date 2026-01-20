@@ -36,21 +36,22 @@ def setup_browser_path() -> None:
 def install_browsers() -> None:
     """Install Playwright browsers if not present."""
     setup_browser_path()
-    try:
-        from playwright._impl._driver import compute_driver_executable
-        driver_executable = compute_driver_executable()
-        subprocess.run(
-            [str(driver_executable), "install", "chromium"],
-            check=True,
-            capture_output=True,
-        )
-    except Exception:
-        # Fallback method
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            check=True,
-            capture_output=True,
-        )
+
+    from playwright._impl._driver import compute_driver_executable
+
+    driver_executable, driver_cli = compute_driver_executable()
+
+    # Install chromium with all dependencies for headless mode
+    result = subprocess.run(
+        [str(driver_executable), str(driver_cli), "install", "chromium"],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        # Show error for debugging
+        error_msg = result.stderr or result.stdout or "Unknown error"
+        raise RuntimeError(f"Failed to install browser: {error_msg}")
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
