@@ -4,6 +4,8 @@ import os
 import random
 import re
 import shutil
+import subprocess
+import sys
 import time
 from typing import Dict, List, Optional
 
@@ -11,6 +13,25 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from della.config import Config
 from della.errors import BrowserError, InvalidCredentialsError
+
+
+def install_browsers() -> None:
+    """Install Playwright browsers if not present."""
+    try:
+        from playwright._impl._driver import compute_driver_executable
+        driver_executable = compute_driver_executable()
+        subprocess.run(
+            [str(driver_executable), "install", "chromium"],
+            check=True,
+            capture_output=True,
+        )
+    except Exception:
+        # Fallback method
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            capture_output=True,
+        )
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -77,7 +98,22 @@ class PlaywrightClient:
 
         self._playwright = sync_playwright().start()
 
-        # Launch browser with persistent context if profile dir exists
+        # Try to launch browser, install if not found
+        try:
+            self._launch_browser()
+        except Exception as e:
+            if "Executable doesn't exist" in str(e):
+                print("Встановлення браузера (один раз)...")
+                install_browsers()
+                self._launch_browser()
+            else:
+                raise
+
+        # Navigate to URL
+        self._page.goto(str(self.cfg.url), wait_until="domcontentloaded")
+
+    def _launch_browser(self) -> None:
+        """Launch the browser."""
         if self._profile_dir:
             self._context = self._playwright.chromium.launch_persistent_context(
                 user_data_dir=self._profile_dir,
@@ -89,9 +125,6 @@ class PlaywrightClient:
             self._browser = self._playwright.chromium.launch(headless=True)
             self._context = self._browser.new_context(user_agent=USER_AGENT)
             self._page = self._context.new_page()
-
-        # Navigate to URL
-        self._page.goto(str(self.cfg.url), wait_until="domcontentloaded")
 
     def close(self) -> None:
         """Close browser and cleanup."""
