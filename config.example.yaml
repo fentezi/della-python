@@ -1,0 +1,21 @@
+# Della configuration example
+# Copy this file to config.yaml and fill in your credentials
+
+# URL of the cargo page to monitor
+url: "https://della.ua/search/gruz/"
+
+# Authentication credentials
+auth:
+  email: "your-email@example.com"
+  pass: "your-password"
+
+# VAT filter options:
+# - with_vat: Only show requests with VAT (ПДВ)
+# - without_vat: Only show requests without VAT
+# - all: Show all requests (default)
+vat_filter: "all"
+
+# Browser persistence settings (optional)
+browser_persistence:
+  enabled: true
+  profiles_dir: "./browser-profiles"
