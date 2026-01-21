@@ -14,7 +14,6 @@ from della.services.parser import ParserService
 from della.storage import CardStorage
 
 POLL_INTERVAL_SECONDS = 120  # 2 хвилини
-CONTACT_FETCH_DELAY_SECONDS = 5
 
 
 def main() -> None:
@@ -85,22 +84,10 @@ def main() -> None:
             if all_cards:
                 first_card = all_cards[0]
                 last_request_id = first_card.request_id
-                try:
-                    contact = http_client.fetch_contact(str(cfg.url), first_card.request_id)
-                    if contact:
-                        first_card.contact = contact
-                        card_storage.add_card(first_card)
-                except Exception:
-                    pass
+                card_storage.add_card(first_card)
         else:
             last_request_id = first_card.request_id
-            try:
-                contact = http_client.fetch_contact(str(cfg.url), first_card.request_id)
-                if contact:
-                    first_card.contact = contact
-                    card_storage.add_card(first_card)
-            except Exception:
-                pass
+            card_storage.add_card(first_card)
 
         # Запуск циклу моніторингу
         print("\n=== Моніторинг нових карток (кожні 2 хв) ===")
@@ -123,23 +110,8 @@ def main() -> None:
 
             if new_cards:
                 last_request_id = new_cards[0].request_id
-
-                cards_with_contacts = []
-                for card in new_cards:
-                    if shutdown_requested:
-                        break
-                    try:
-                        contact = http_client.fetch_contact(str(cfg.url), card.request_id)
-                        if contact:
-                            card.contact = contact
-                            cards_with_contacts.append(card)
-                    except Exception:
-                        pass
-                    time.sleep(CONTACT_FETCH_DELAY_SECONDS)
-
-                if cards_with_contacts:
-                    card_storage.add_cards(cards_with_contacts)
-                    print(f"+ {len(cards_with_contacts)} нових карток (всього: {card_storage.count()})")
+                card_storage.add_cards(new_cards)
+                print(f"+ {len(new_cards)} нових карток (всього: {card_storage.count()})")
 
         signal_handler.wait_for_shutdown(timeout=30)
 

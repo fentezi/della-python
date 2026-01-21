@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 from bs4 import BeautifulSoup, Tag
 
-from della.services.parser.models import Contact, Location, PriceInfo
+from della.services.parser.models import Location, PriceInfo
 
 
 def normalize_text(text: str) -> str:
@@ -186,36 +186,3 @@ def parse_locations_from_html(html_fragment: str) -> List[Location]:
         locations.append(Location(city=city, country=country))
 
     return locations
-
-
-def parse_contact_from_info_block(html_content: str) -> Contact:
-    """Parse contact information from request_info_block HTML."""
-    soup = BeautifulSoup(html_content, "lxml")
-
-    contact = Contact()
-
-    # Extract company name
-    company_link = soup.select_one(".company_name a.company_link")
-    if company_link:
-        contact.company_name = normalize_text(company_link.get_text())
-
-    # Extract contact name
-    contact_name = soup.select_one(".contact_name")
-    if contact_name:
-        contact.name = normalize_text(contact_name.get_text())
-
-    # Extract phones
-    phone_elements = soup.select(".contact.phones .value a")
-    for phone_elem in phone_elements:
-        phone = normalize_text(phone_elem.get_text())
-        if phone:
-            contact.phone.append(phone)
-
-    # Extract emails
-    email_elements = soup.select(".contact.email .value a")
-    for email_elem in email_elements:
-        email = normalize_text(email_elem.get_text())
-        if email:
-            contact.email.append(email)
-
-    return contact

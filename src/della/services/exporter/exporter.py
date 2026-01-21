@@ -151,10 +151,6 @@ class Exporter:
                 main_price,
                 price_per_km,
                 price_tags,
-                card.contact.company_name,
-                card.contact.name,
-                format_tags(card.contact.phone),
-                format_tags(card.contact.email),
             ]
 
             for value in final_values:

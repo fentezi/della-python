@@ -24,16 +24,6 @@ class PriceInfo:
 
 
 @dataclass
-class Contact:
-    """Contact information for a cargo card."""
-
-    company_name: str = ""
-    name: str = ""
-    phone: List[str] = field(default_factory=list)
-    email: List[str] = field(default_factory=list)
-
-
-@dataclass
 class CargoCard:
     """Parsed cargo request data."""
 
@@ -47,11 +37,3 @@ class CargoCard:
     to_cities: List[Location] = field(default_factory=list)
     request_tags: List[str] = field(default_factory=list)
     price: Optional[PriceInfo] = None
-    contact: Contact = field(default_factory=Contact)
-
-
-@dataclass
-class ContactJSON:
-    """JSON response structure for contact information."""
-
-    info_block: str = ""
