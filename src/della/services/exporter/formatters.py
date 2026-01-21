@@ -164,6 +164,7 @@ def create_headers(max_from: int, max_to: int) -> List[str]:
         "Основна ціна",
         "Ціна за км",
         "Теги ціни",
+        "URL",
     ])
 
     return headers

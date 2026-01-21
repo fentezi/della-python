@@ -186,3 +186,13 @@ def parse_locations_from_html(html_fragment: str) -> List[Location]:
         locations.append(Location(city=city, country=country))
 
     return locations
+
+
+def parse_card_url(card: Tag) -> str:
+    """Extract the card URL from the route link."""
+    link_elem = card.select_one(".request_route a.request_distance")
+    if link_elem:
+        href = link_elem.get("href", "")
+        if href:
+            return f"https://della.ua{href}"
+    return ""

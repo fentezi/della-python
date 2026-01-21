@@ -151,6 +151,7 @@ class Exporter:
                 main_price,
                 price_per_km,
                 price_tags,
+                card.url,
             ]
 
             for value in final_values:

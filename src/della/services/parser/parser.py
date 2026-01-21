@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from della.config import VATFilter
 from della.errors import ParsingError
 from della.services.parser.card_parser import (
+    parse_card_url,
     parse_cargo_type,
     parse_date,
     parse_price,
@@ -129,6 +130,7 @@ class ParserService:
         request_tags = parse_request_tags(card)
         price = parse_price(card)
         from_cities, to_cities = parse_route(card)
+        url = parse_card_url(card)
 
         return CargoCard(
             request_id=request_id,
@@ -141,6 +143,7 @@ class ParserService:
             to_cities=to_cities,
             request_tags=request_tags,
             price=price,
+            url=url,
         )
 
     def _should_include_card(self, card: CargoCard) -> bool:

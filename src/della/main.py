@@ -1,5 +1,6 @@
 """Головна точка входу для програми della."""
 
+import random
 import sys
 import time
 from typing import Optional
@@ -13,7 +14,8 @@ from della.services.http_client import HTTPClient
 from della.services.parser import ParserService
 from della.storage import CardStorage
 
-POLL_INTERVAL_SECONDS = 120  # 2 хвилини
+POLL_INTERVAL_MIN = 100  # мінімальний інтервал
+POLL_INTERVAL_MAX = 140  # максимальний інтервал
 
 
 def main() -> None:
@@ -90,11 +92,12 @@ def main() -> None:
             card_storage.add_card(first_card)
 
         # Запуск циклу моніторингу
-        print("\n=== Моніторинг нових карток (кожні 2 хв) ===")
+        print("\n=== Моніторинг нових карток ===")
         print("Натисніть Ctrl+C для завершення...\n")
 
         while not shutdown_requested:
-            for _ in range(POLL_INTERVAL_SECONDS):
+            poll_interval = random.randint(POLL_INTERVAL_MIN, POLL_INTERVAL_MAX)
+            for _ in range(poll_interval):
                 if shutdown_requested:
                     break
                 time.sleep(1)
