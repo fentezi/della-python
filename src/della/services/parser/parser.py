@@ -163,11 +163,14 @@ class ParserService:
         if card.price is None:
             return self.vat_filter == VATFilter.WITHOUT_VAT
 
-        # Check if "ПДВ" exists in price tags
+        # Check if card has VAT (з ПДВ) or without VAT (Без ПДВ)
         has_vat = False
         for tag in card.price.price_tags:
-            # Check for VAT tag (may include newline from HTML)
-            if "ПДВ" in tag:
+            tag_lower = tag.lower()
+            if "без пдв" in tag_lower:
+                has_vat = False
+                break
+            elif "пдв" in tag_lower or "з пдв" in tag_lower:
                 has_vat = True
                 break
 
