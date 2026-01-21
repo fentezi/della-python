@@ -14,8 +14,8 @@ from della.services.http_client import HTTPClient
 from della.services.parser import ParserService
 from della.storage import CardStorage
 
-POLL_INTERVAL_MIN = 100  # мінімальний інтервал
-POLL_INTERVAL_MAX = 140  # максимальний інтервал
+POLL_INTERVAL_MIN = 120  # мінімальний інтервал
+POLL_INTERVAL_MAX = 160  # максимальний інтервал
 
 
 def main() -> None:
