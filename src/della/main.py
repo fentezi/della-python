@@ -1,32 +1,183 @@
 """Головна точка входу для програми della."""
 
+import queue
 import random
 import sys
+import threading
 import time
-from typing import Optional
+from typing import List, Optional
 
 from della.config import load_config
+from della.config.config import LardiTransConfig
 from della.errors import InvalidCredentialsError
 from della.handlers import SignalHandler
 from della.services.browser import PlaywrightClient
-from della.services.exporter import Exporter
 from della.services.http_client import HTTPClient
+from della.services.larditrans import (
+    Contact,
+    DuplicateProposalError,
+    InvalidTokenError,
+    LardiTransClient,
+    Mapper,
+    MissingPriceError,
+    MissingWeightError,
+    TownNotFoundError,
+)
 from della.services.parser import ParserService
+from della.services.parser.models import CargoCard
 from della.storage import CardStorage
 
 POLL_INTERVAL_MIN = 120  # мінімальний інтервал
 POLL_INTERVAL_MAX = 160  # максимальний інтервал
 
 
+class LardiTransPublisher:
+    """Background publisher for Lardi-Trans API."""
+
+    def __init__(self, config: LardiTransConfig) -> None:
+        """Initialize publisher.
+
+        Args:
+            config: Lardi-Trans configuration.
+        """
+        self._config = config
+        self._queue: queue.Queue[CargoCard] = queue.Queue()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._client: Optional[LardiTransClient] = None
+        self._mapper: Optional[Mapper] = None
+        self._published_count = 0
+        self._pending_count = 0
+        self._batch_done = threading.Event()
+        self._total_published = 0
+
+    def start(self) -> bool:
+        """Start the publisher background thread.
+
+        Returns:
+            True if started successfully, False on error.
+        """
+        try:
+            self._client = LardiTransClient(
+                token=self._config.token,
+                base_url=self._config.base_url,
+            )
+            self._client.load_references()
+            self._mapper = Mapper(self._client, self._config.contact_id)
+
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+            return True
+        except InvalidTokenError:
+            print("Lardi-Trans: невірний токен API")
+            return False
+        except Exception as e:
+            print(f"Lardi-Trans: помилка ініціалізації: {e}")
+            return False
+
+    def stop(self) -> None:
+        """Stop the publisher and wait for thread to finish."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        if self._client:
+            self._client.close()
+
+    def publish(self, cards: List[CargoCard]) -> None:
+        """Queue cards for publication.
+
+        Args:
+            cards: List of cargo cards to publish.
+        """
+        for card in cards:
+            self._queue.put(card)
+
+    def publish_and_wait(self, cards: List[CargoCard], timeout: float = 120.0) -> int:
+        """Publish cards and wait for batch completion.
+
+        Args:
+            cards: List of cargo cards to publish.
+            timeout: Max time to wait for batch completion.
+
+        Returns:
+            Number of successfully published cards.
+        """
+        if not cards:
+            return 0
+
+        self._batch_done.clear()
+        self._pending_count = len(cards)
+        self._published_count = 0
+
+        for card in cards:
+            self._queue.put(card)
+
+        self._batch_done.wait(timeout=timeout)
+        return self._published_count
+
+    @property
+    def total_published(self) -> int:
+        """Total number of published cards."""
+        return self._total_published
+
+    def _run(self) -> None:
+        """Background thread main loop."""
+        while not self._stop_event.is_set():
+            try:
+                card = self._queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            self._publish_card(card)
+            time.sleep(self._config.publish_delay)
+
+    def _publish_card(self, card: CargoCard) -> None:
+        """Publish a single card to Lardi-Trans.
+
+        Args:
+            card: Cargo card to publish.
+        """
+        if self._mapper is None or self._client is None:
+            self._finish_card()
+            return
+
+        try:
+            request = self._mapper.map_cargo_card(card)
+            self._client.create_cargo_proposal(request)
+            self._published_count += 1
+            self._total_published += 1
+            print(f"+ 1 в Lardi (всього: {self._total_published})")
+        except MissingPriceError:
+            print("- пропущено: немає ціни")
+        except MissingWeightError:
+            print("- пропущено: немає ваги")
+        except TownNotFoundError:
+            print("- пропущено: місто не знайдено")
+        except DuplicateProposalError:
+            pass
+        except InvalidTokenError:
+            self._stop_event.set()
+        except Exception:
+            pass
+        finally:
+            self._finish_card()
+
+    def _finish_card(self) -> None:
+        """Mark card as processed and signal if batch is done."""
+        self._pending_count -= 1
+        if self._pending_count <= 0:
+            self._batch_done.set()
+
+
 def main() -> None:
     """Головна точка входу."""
     browser_client: Optional[PlaywrightClient] = None
     http_client: Optional[HTTPClient] = None
-    shutdown_requested = False
+    lardi_publisher: Optional[LardiTransPublisher] = None
 
     def request_shutdown() -> None:
-        nonlocal shutdown_requested
-        shutdown_requested = True
+        if lardi_publisher:
+            lardi_publisher.stop()
 
     try:
         print("Запуск програми...")
@@ -68,11 +219,40 @@ def main() -> None:
         # Створення сховища карток
         card_storage = CardStorage()
 
-        # Створення експортера для Excel
-        card_exporter = Exporter("./exports", "cargo_export")
+        # Ініціалізація Lardi-Trans публікатора (якщо налаштовано)
+        lardi_config = cfg.get_lardi_trans()
+        if lardi_config:
+            print("Ініціалізація Lardi-Trans...")
+
+            # Вибір контакту
+            try:
+                temp_client = LardiTransClient(
+                    token=lardi_config.token,
+                    base_url=lardi_config.base_url,
+                )
+                contacts = temp_client.get_contacts()
+                temp_client.close()
+
+                if contacts:
+                    selected_id = _select_contact(contacts)
+                    if selected_id:
+                        lardi_config.contact_id = selected_id
+                        print(f"Обрано контакт ID: {selected_id}")
+            except InvalidTokenError:
+                print("Lardi-Trans: невірний токен API")
+                lardi_config = None
+            except Exception as e:
+                print(f"Lardi-Trans: помилка отримання контактів: {e}")
+
+            if lardi_config:
+                lardi_publisher = LardiTransPublisher(lardi_config)
+                if lardi_publisher.start():
+                    print("Lardi-Trans: готовий до публікації")
+                else:
+                    lardi_publisher = None
 
         # Налаштування обробника сигналів
-        signal_handler = SignalHandler(card_storage, card_exporter)
+        signal_handler = SignalHandler(card_storage)
         signal_handler.setup(request_shutdown)
 
         # Початкове завантаження
@@ -87,22 +267,21 @@ def main() -> None:
                 first_card = all_cards[0]
                 last_request_id = first_card.request_id
                 card_storage.add_card(first_card)
+                if lardi_publisher:
+                    lardi_publisher.publish([first_card])
         else:
             last_request_id = first_card.request_id
             card_storage.add_card(first_card)
+            if lardi_publisher:
+                lardi_publisher.publish([first_card])
 
         # Запуск циклу моніторингу
         print("\n=== Моніторинг нових карток ===")
         print("Натисніть Ctrl+C для завершення...\n")
 
-        while not shutdown_requested:
+        while not signal_handler.is_shutdown_requested:
             poll_interval = random.randint(POLL_INTERVAL_MIN, POLL_INTERVAL_MAX)
-            for _ in range(poll_interval):
-                if shutdown_requested:
-                    break
-                time.sleep(1)
-
-            if shutdown_requested:
+            if signal_handler.wait_for_shutdown(timeout=poll_interval):
                 break
 
             try:
@@ -114,9 +293,9 @@ def main() -> None:
             if new_cards:
                 last_request_id = new_cards[0].request_id
                 card_storage.add_cards(new_cards)
-                print(f"+ {len(new_cards)} нових карток (всього: {card_storage.count()})")
 
-        signal_handler.wait_for_shutdown(timeout=30)
+                if lardi_publisher:
+                    lardi_publisher.publish(new_cards)
 
     except KeyboardInterrupt:
         pass
@@ -124,13 +303,14 @@ def main() -> None:
         print(f"Помилка: {e}")
         _wait_for_exit()
     finally:
+        if lardi_publisher:
+            lardi_publisher.stop()
         if http_client:
             http_client.close()
         if browser_client:
-            try:
-                browser_client.close()
-            except Exception:
-                pass
+            close_thread = threading.Thread(target=browser_client.close)
+            close_thread.start()
+            close_thread.join(timeout=3.0)
         sys.exit(0)
 
 
@@ -141,6 +321,35 @@ def _wait_for_exit() -> None:
         input()
     except (EOFError, KeyboardInterrupt):
         pass
+
+
+def _select_contact(contacts: List[Contact]) -> Optional[int]:
+    """Вибір контакту зі списку.
+
+    Args:
+        contacts: Список контактів.
+
+    Returns:
+        ID обраного контакту або None.
+    """
+    if not contacts:
+        return None
+
+    print("\nОберіть контакт:")
+    for i, contact in enumerate(contacts, 1):
+        print(f"  {i}. {contact.face}")
+
+    try:
+        choice = input("\nНомер контакту: ").strip()
+        if not choice:
+            return None
+        idx = int(choice) - 1
+        if 0 <= idx < len(contacts):
+            return contacts[idx].contact_id
+        print("Невірний номер")
+        return None
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return None
 
 
 if __name__ == "__main__":
