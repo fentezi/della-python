@@ -1,27 +1,32 @@
 """Обробник сигналів для graceful shutdown."""
 
 import signal
-import sys
 import threading
 from typing import Callable, Optional
 
-from della.services.exporter.exporter import Exporter
 from della.storage.card_storage import CardStorage
 
 
 class SignalHandler:
     """Обробник системних сигналів для graceful shutdown."""
 
-    def __init__(self, storage: CardStorage, exporter: Exporter):
-        """Ініціалізація обробника сигналів."""
+    def __init__(self, storage: CardStorage):
+        """Ініціалізація обробника сигналів.
+
+        Args:
+            storage: Сховище карток.
+        """
         self.storage = storage
-        self.exporter = exporter
         self._shutdown_event = threading.Event()
         self._cancel_callback: Optional[Callable[[], None]] = None
         self._handled = False
 
     def setup(self, cancel_callback: Callable[[], None]) -> None:
-        """Налаштування обробників сигналів."""
+        """Налаштування обробників сигналів.
+
+        Args:
+            cancel_callback: Функція для виклику при завершенні.
+        """
         self._cancel_callback = cancel_callback
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -39,25 +44,20 @@ class SignalHandler:
 
         print("\n\nЗавершення...")
 
+        self._shutdown_event.set()
+
         if self._cancel_callback:
             self._cancel_callback()
 
-        cards = self.storage.get_all()
-
-        if not cards:
-            print("Немає карток для експорту.")
-        else:
-            try:
-                filepath = self.exporter.export_to_excel(cards)
-                print(f"✓ Експортовано {len(cards)} карток: {filepath}")
-            except Exception as e:
-                print(f"Помилка експорту: {e}")
-
-        self._shutdown_event.set()
-        sys.exit(0)
-
     def wait_for_shutdown(self, timeout: Optional[float] = None) -> bool:
-        """Очікування завершення shutdown."""
+        """Очікування завершення shutdown.
+
+        Args:
+            timeout: Максимальний час очікування в секундах.
+
+        Returns:
+            True якщо shutdown завершено, False якщо timeout.
+        """
         return self._shutdown_event.wait(timeout)
 
     @property

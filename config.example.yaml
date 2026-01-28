@@ -19,3 +19,12 @@ vat_filter: "all"
 browser_persistence:
   enabled: true
   profiles_dir: "./browser-profiles"
+
+# Lardi-Trans API settings (optional)
+# Automatically publishes found cargo cards to Lardi-Trans
+lardi_trans:
+  enabled: false
+  token: "Bearer YOUR_API_TOKEN"
+  base_url: "https://api.lardi-trans.com/v2"
+  # contact_id: 12345  # Optional: specific contact person ID
+  publish_delay: 1.0  # Delay between publications in seconds

@@ -32,6 +32,25 @@ class BrowserPersistence(BaseModel):
     profiles_dir: str = "./browser-profiles"
 
 
+class LardiTransConfig(BaseModel):
+    """Lardi-Trans API configuration."""
+
+    enabled: bool = False
+    token: str = Field(default="", description="API token (include 'Bearer ' prefix)")
+    base_url: str = Field(
+        default="https://api.lardi-trans.com/v2",
+        description="Base URL for API requests",
+    )
+    contact_id: Optional[int] = Field(
+        default=None,
+        description="Contact person ID for cargo proposals",
+    )
+    publish_delay: float = Field(
+        default=1.0,
+        description="Delay between publications in seconds",
+    )
+
+
 class Config(BaseModel):
     """Main application configuration."""
 
@@ -42,6 +61,7 @@ class Config(BaseModel):
         description="VAT filter: with_vat, without_vat, or all",
     )
     browser_persistence: Optional[BrowserPersistence] = None
+    lardi_trans: Optional[LardiTransConfig] = None
 
     @field_validator("url", mode="before")
     @classmethod
@@ -58,6 +78,20 @@ class Config(BaseModel):
     def get_vat_filter(self) -> VATFilter:
         """Get VAT filter setting."""
         return self.vat_filter
+
+    def get_lardi_trans(self) -> Optional[LardiTransConfig]:
+        """Get Lardi-Trans configuration if enabled.
+
+        Returns:
+            LardiTransConfig if enabled and token provided, None otherwise.
+        """
+        if self.lardi_trans is None:
+            return None
+        if not self.lardi_trans.enabled:
+            return None
+        if not self.lardi_trans.token:
+            return None
+        return self.lardi_trans
 
 
 def load_config(config_path: str = "./config.yaml") -> Config:
