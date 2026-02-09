@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import List, Optional, Tuple
 
 from della.services.larditrans.client import LardiTransClient
-from della.services.larditrans.exceptions import MissingPriceError, MissingWeightError
+from della.services.larditrans.exceptions import MissingWeightError
 from della.services.larditrans.mappings import (
     BODY_TYPE_MAPPING,
     COUNTRY_MAPPING,
@@ -45,16 +45,17 @@ class Mapper:
             Request object ready for API submission.
 
         Raises:
-            MissingPriceError: If price is required but missing.
             MissingWeightError: If weight is required but missing.
             TownNotFoundError: If location lookup fails.
         """
-        if card.price is None or not card.price.main_price:
-            raise MissingPriceError()
-
         date_from, date_to = self._map_date(card.date)
         weight = self._map_weight(card.weight)
-        price_value, currency_id = self._map_price(card.price)
+
+        if card.price and card.price.main_price:
+            price_value, currency_id = self._map_price(card.price)
+        else:
+            price_value = 0
+            currency_id = DEFAULT_CURRENCY_ID
         body_type_ids = self._map_body_type(card.truck_type)
         waypoint_source = self._map_locations(card.from_cities)
         waypoint_target = self._map_locations(card.to_cities)
