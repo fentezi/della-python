@@ -19,7 +19,6 @@ from della.services.larditrans import (
     InvalidTokenError,
     LardiTransClient,
     Mapper,
-    MissingPriceError,
     MissingWeightError,
     TownNotFoundError,
 )
@@ -147,8 +146,6 @@ class LardiTransPublisher:
             self._published_count += 1
             self._total_published += 1
             print(f"+ 1 в Lardi (всього: {self._total_published})")
-        except MissingPriceError:
-            print("- пропущено: немає ціни")
         except MissingWeightError:
             print("- пропущено: немає ваги")
         except TownNotFoundError:
