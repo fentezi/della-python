@@ -12,6 +12,7 @@ from della.services.parser.card_parser import (
     parse_card_url,
     parse_cargo_type,
     parse_date,
+    parse_dimensions,
     parse_price,
     parse_request_tags,
     parse_route,
@@ -125,6 +126,7 @@ class ParserService:
         date = parse_date(card)
         weight = parse_weight(card)
         volume = parse_volume(card)
+        length, width, height = parse_dimensions(card)
         truck_type = parse_truck_type(card)
         cargo_type = parse_cargo_type(card)
         request_tags = parse_request_tags(card)
@@ -137,6 +139,9 @@ class ParserService:
             date=date,
             weight=weight,
             volume=volume,
+            length=length,
+            width=width,
+            height=height,
             truck_type=truck_type,
             cargo_type=cargo_type,
             from_cities=from_cities,

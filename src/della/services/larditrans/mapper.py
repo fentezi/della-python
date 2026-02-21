@@ -67,6 +67,10 @@ class Mapper:
             except ValueError:
                 pass
 
+        size_length = _try_parse_optional(card.length)
+        size_width = _try_parse_optional(card.width)
+        size_height = _try_parse_optional(card.height)
+
         payment_forms: Optional[List[PaymentForm]] = None
         if card.price and card.price.price_tags:
             payment_forms = self._map_payment_forms(card.price.price_tags)
@@ -82,6 +86,9 @@ class Mapper:
             waypoint_target=waypoint_target,
             content_name=card.cargo_type,
             size_volume=volume,
+            size_length=size_length,
+            size_width=size_width,
+            size_height=size_height,
             contact_id=self._contact_id,
             payment_forms=payment_forms,
         )
@@ -260,6 +267,16 @@ class Mapper:
             forms.append(PaymentForm(id=type_id, vat=has_vat))
 
         return forms if forms else None
+
+
+def _try_parse_optional(value: Optional[str]) -> Optional[float]:
+    """Try to parse an optional string to float, returning None on failure."""
+    if not value:
+        return None
+    try:
+        return _parse_numeric_value(value)
+    except ValueError:
+        return None
 
 
 def _parse_numeric_value(s: str) -> float:

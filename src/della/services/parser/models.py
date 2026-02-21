@@ -33,6 +33,9 @@ class CargoCard:
     cargo_type: str
     weight: Optional[str] = None
     volume: Optional[str] = None
+    length: Optional[str] = None
+    width: Optional[str] = None
+    height: Optional[str] = None
     from_cities: List[Location] = field(default_factory=list)
     to_cities: List[Location] = field(default_factory=list)
     request_tags: List[str] = field(default_factory=list)

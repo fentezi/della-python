@@ -69,6 +69,34 @@ def parse_volume(card: Tag) -> Optional[str]:
     return None
 
 
+def parse_dimensions(card: Tag) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Extract cargo dimensions (length, width, height) from the card.
+
+    Parses format like: (дов=2,1м шир=1м вис=1м)
+    """
+    text_elem = card.select_one(".request_text")
+    if not text_elem:
+        return None, None, None
+
+    text = normalize_text(text_elem.get_text())
+    if not text:
+        return None, None, None
+
+    length = _extract_dimension(text, "дов")
+    width = _extract_dimension(text, "шир")
+    height = _extract_dimension(text, "вис")
+
+    return length, width, height
+
+
+def _extract_dimension(text: str, prefix: str) -> Optional[str]:
+    """Extract a single dimension value by its Ukrainian prefix."""
+    match = re.search(rf"{prefix}\s*=\s*([\d,.\s]+м)", text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
 def parse_truck_type(card: Tag) -> str:
     """Extract the truck type from the card."""
     truck_elem = card.select_one(".truck_type")
