@@ -264,13 +264,9 @@ def main() -> None:
                 first_card = all_cards[0]
                 last_request_id = first_card.request_id
                 card_storage.add_card(first_card)
-                if lardi_publisher:
-                    lardi_publisher.publish([first_card])
         else:
             last_request_id = first_card.request_id
             card_storage.add_card(first_card)
-            if lardi_publisher:
-                lardi_publisher.publish([first_card])
 
         # Запуск циклу моніторингу
         print("\n=== Моніторинг нових карток ===")
