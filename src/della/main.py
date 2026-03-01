@@ -5,7 +5,7 @@ import random
 import sys
 import threading
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from della.config import load_config
 from della.config.config import LardiTransConfig
@@ -24,22 +24,30 @@ from della.services.larditrans import (
 )
 from della.services.parser import ParserService
 from della.services.parser.models import CargoCard
-from della.storage import CardStorage
+from della.storage import AppState, CardStorage
 
 POLL_INTERVAL_MIN = 120  # мінімальний інтервал
 POLL_INTERVAL_MAX = 160  # максимальний інтервал
+CLOSED_SCAN_EXTRA_PAGES = 15  # скільки сторінок сканувати після маркера (тільки закриті)
 
 
 class LardiTransPublisher:
     """Background publisher for Lardi-Trans API."""
 
-    def __init__(self, config: LardiTransConfig) -> None:
+    def __init__(
+        self,
+        config: LardiTransConfig,
+        on_published: Optional[Callable[[str, int], None]] = None,
+    ) -> None:
         """Initialize publisher.
 
         Args:
             config: Lardi-Trans configuration.
+            on_published: Callback invoked with (della_id, lardi_id) after
+                          each successful publication.
         """
         self._config = config
+        self._on_published = on_published
         self._queue: queue.Queue[CargoCard] = queue.Queue()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -114,6 +122,16 @@ class LardiTransPublisher:
         self._batch_done.wait(timeout=timeout)
         return self._published_count
 
+    def delete_proposal(self, lardi_id: int) -> None:
+        """Delete a proposal from Lardi-Trans (synchronous, main-thread call).
+
+        Args:
+            lardi_id: Lardi-Trans proposal ID to delete.
+        """
+        if self._client is None:
+            return
+        self._client.throw_proposals([lardi_id])
+
     @property
     def total_published(self) -> int:
         """Total number of published cards."""
@@ -142,20 +160,26 @@ class LardiTransPublisher:
 
         try:
             request = self._mapper.map_cargo_card(card)
-            self._client.create_cargo_proposal(request)
+            proposal_id = self._client.create_cargo_proposal(request)
             self._published_count += 1
             self._total_published += 1
             print(f"+ 1 в Lardi (всього: {self._total_published})")
+            if self._on_published is not None:
+                try:
+                    self._on_published(card.fingerprint, proposal_id)
+                except Exception:
+                    pass
         except MissingWeightError:
             print("- пропущено: немає ваги")
-        except TownNotFoundError:
-            print("- пропущено: місто не знайдено")
+        except TownNotFoundError as e:
+            print(f"- пропущено: місто не знайдено ({e})")
         except DuplicateProposalError:
-            pass
+            print("- пропущено: дублікат")
         except InvalidTokenError:
+            print("- помилка: невірний токен Lardi")
             self._stop_event.set()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"- помилка публікації: {type(e).__name__}: {e}")
         finally:
             self._finish_card()
 
@@ -171,6 +195,9 @@ def main() -> None:
     browser_client: Optional[PlaywrightClient] = None
     http_client: Optional[HTTPClient] = None
     lardi_publisher: Optional[LardiTransPublisher] = None
+
+    app_state = AppState()
+    app_state.load()
 
     def request_shutdown() -> None:
         if lardi_publisher:
@@ -242,7 +269,10 @@ def main() -> None:
                 print(f"Lardi-Trans: помилка отримання контактів: {e}")
 
             if lardi_config:
-                lardi_publisher = LardiTransPublisher(lardi_config)
+                lardi_publisher = LardiTransPublisher(
+                    lardi_config,
+                    on_published=app_state.add_proposal,
+                )
                 if lardi_publisher.start():
                     print("Lardi-Trans: готовий до публікації")
                 else:
@@ -252,21 +282,16 @@ def main() -> None:
         signal_handler = SignalHandler(card_storage)
         signal_handler.setup(request_shutdown)
 
-        # Початкове завантаження
+        # При кожному запуску: взяти поточну першу картку як checkpoint
+        # Нові картки не публікуємо — тільки відстежуємо закриті через proposal_map
+        print("Оновлення контрольної точки...")
         content = http_client.get(str(cfg.url))
-        first_card = parser_service.parse_first_card(content)
-
-        last_request_id = ""
-
-        if first_card is None:
-            all_cards = parser_service.parse_cards_until_id(content, "")
-            if all_cards:
-                first_card = all_cards[0]
-                last_request_id = first_card.request_id
-                card_storage.add_card(first_card)
-        else:
-            last_request_id = first_card.request_id
-            card_storage.add_card(first_card)
+        first_result = parser_service.parse_page_cards(content, "")
+        checkpoint = first_result.first_card_id
+        if checkpoint:
+            app_state.last_request_id = checkpoint
+            app_state.save()
+            print(f"Контрольна точка: {checkpoint}")
 
         # Запуск циклу моніторингу
         print("\n=== Моніторинг нових карток ===")
@@ -278,17 +303,110 @@ def main() -> None:
                 break
 
             try:
-                content = http_client.get(str(cfg.url))
-                new_cards = parser_service.parse_cards_until_id(content, last_request_id)
+                all_new_cards: List[CargoCard] = []
+                all_closed_ids: List[str] = []
+                current_url = str(cfg.url)
+                page_num = 0
+                marker_found = False
+                closed_only_pages = 0
+                last_page_result = None
+
+                checkpoint = app_state.last_request_id
+                print(f"[debug] шукаємо маркер: {checkpoint[:40]}...")
+
+                while True:
+                    page_num += 1
+                    try:
+                        content = http_client.get(current_url)
+                    except Exception:
+                        break
+
+                    if not marker_found:
+                        page_result = parser_service.parse_page_cards(
+                            content, checkpoint
+                        )
+                        last_page_result = page_result
+                        all_new_cards.extend(page_result.new_cards)
+                        all_closed_ids.extend(page_result.closed_card_ids)
+
+                        first_id = page_result.first_card_id or "none"
+                        last_id = page_result.last_card_id or "none"
+                        print(
+                            f"[debug] стор.{page_num}: "
+                            f"карток={page_result.total_cards}, "
+                            f"нових={len(page_result.new_cards)}, "
+                            f"VAT-фільтр={page_result.filtered_by_vat}, "
+                            f"закритих={len(page_result.closed_card_ids)}, "
+                            f"маркер={'ТАК' if page_result.marker_found else 'ні'}"
+                        )
+                        print(f"[debug]   перша: {first_id[:40]}...")
+                        print(f"[debug]   остання: {last_id[:40]}...")
+
+                        if page_result.marker_found:
+                            print(f"[debug] маркер знайдено на сторінці {page_num}")
+                            marker_found = True
+                            if app_state.proposal_count == 0:
+                                break
+                    else:
+                        extra_closed = parser_service.collect_closed_ids(content)
+                        all_closed_ids.extend(extra_closed)
+                        closed_only_pages += 1
+                        if extra_closed:
+                            print(f"[debug] closed-scan стор.{page_num}: закритих={len(extra_closed)}")
+                        if closed_only_pages >= CLOSED_SCAN_EXTRA_PAGES:
+                            break
+
+                    next_url = parser_service.parse_next_page_url(
+                        content, page_num + 1
+                    )
+
+                    if next_url is None:
+                        if not marker_found and last_page_result is not None:
+                            print(
+                                f"[debug] маркер НЕ знайдено після {page_num} стор., "
+                                f"всього нових: {len(all_new_cards)}"
+                            )
+                            if last_page_result.last_card_id:
+                                app_state.last_request_id = last_page_result.last_card_id
+                                print(f"[debug] новий checkpoint: {last_page_result.last_card_id[:40]}...")
+                        break
+
+                    current_url = next_url
+
+                # Оновлення контрольної точки до найновішої нової картки
+                if all_new_cards:
+                    app_state.last_request_id = all_new_cards[0].fingerprint
+                    print(f"[debug] checkpoint → {all_new_cards[0].fingerprint}")
+
+                app_state.save()
+
+                # Видалення закритих карток з Lardi-Trans
+                if all_closed_ids:
+                    print(f"[debug] закритих карток на сторінках: {len(all_closed_ids)}")
+                for della_id in all_closed_ids:
+                    lardi_id = app_state.get_lardi_id(della_id)
+                    if lardi_id is not None and lardi_publisher is not None:
+                        try:
+                            lardi_publisher.delete_proposal(lardi_id)
+                            app_state.remove_proposal(della_id)
+                            app_state.save()
+                            print(f"Видалено з Lardi: картка {della_id[:40]}...")
+                        except InvalidTokenError:
+                            print("Lardi-Trans: невірний токен при видаленні")
+                        except Exception as e:
+                            print(f"Lardi-Trans: помилка видалення {della_id[:40]}: {e}")
+                        if lardi_config:
+                            time.sleep(lardi_config.publish_delay)
+
+                # Публікація нових карток
+                if all_new_cards:
+                    print(f"[debug] публікуємо {len(all_new_cards)} нових карток")
+                    card_storage.add_cards(all_new_cards)
+                    if lardi_publisher:
+                        lardi_publisher.publish(all_new_cards)
+
             except Exception:
                 continue
-
-            if new_cards:
-                last_request_id = new_cards[0].request_id
-                card_storage.add_cards(new_cards)
-
-                if lardi_publisher:
-                    lardi_publisher.publish(new_cards)
 
     except KeyboardInterrupt:
         pass

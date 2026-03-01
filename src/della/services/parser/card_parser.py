@@ -12,7 +12,7 @@ from della.services.parser.models import Location, PriceInfo
 
 def normalize_text(text: str) -> str:
     """Clean and format text by removing HTML entities."""
-    return text.replace("&nbsp;", " ").strip()
+    return text.replace("&nbsp;", " ").replace("\u00a0", " ").strip()
 
 
 def extract_final_price(text: str) -> str:
@@ -224,3 +224,35 @@ def parse_card_url(card: Tag) -> str:
         if href:
             return f"https://della.ua{href}"
     return ""
+
+
+def parse_city_pair(card: Tag) -> str:
+    """Extract stable city IDs from the distance link.
+
+    Finds <a class="distance" href="/distance/?cities=208,5404&...">
+    and returns the "cities" query parameter value like "208,5404".
+    Falls back to a.request_distance which has the same cities parameter.
+    """
+    link = card.select_one("a.distance") or card.select_one("a.request_distance")
+    if not link:
+        return ""
+    href = link.get("href", "")
+    match = re.search(r"[?&]cities=([^&]+)", href)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def parse_is_closed(card: Tag) -> bool:
+    """Return True if the card has a closed status element.
+
+    Closed cards contain <div class="closed">закрито</div>
+    inside the .request_card element.
+
+    Args:
+        card: BeautifulSoup Tag element for the card.
+
+    Returns:
+        True if the card is marked as closed.
+    """
+    return card.select_one(".closed") is not None

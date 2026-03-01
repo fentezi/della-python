@@ -327,3 +327,46 @@ class LardiTransClient:
             raise APIError(message, error_data.get("code"))
         except (ValueError, KeyError):
             raise APIError(f"Request failed with status {resp.status_code}")
+
+    def throw_proposals(self, cargo_ids: List[int]) -> None:
+        """Move cargo proposals to the basket (delete them).
+
+        Retries with exponential backoff on rate limiting.
+
+        Args:
+            cargo_ids: List of Lardi-Trans proposal IDs to delete.
+
+        Raises:
+            InvalidTokenError: If API token is invalid.
+            RateLimitedError: If rate limit exceeded after retries.
+            APIError: If API request fails.
+        """
+        if not cargo_ids:
+            return
+
+        def _throw() -> None:
+            self._throw_proposals_once(cargo_ids)
+
+        retry_on_rate_limit(_throw)
+
+    def _throw_proposals_once(self, cargo_ids: List[int]) -> None:
+        """Execute single throw_proposals request."""
+        resp = self._http_client.post(
+            f"{self._base_url}/proposals/my/basket/throw",
+            headers=self._headers(),
+            json={"cargoIds": cargo_ids, "lorryIds": []},
+        )
+
+        if resp.status_code == 401:
+            raise InvalidTokenError()
+        if resp.status_code == 429:
+            raise RateLimitedError()
+        if resp.status_code in (200, 204):
+            return
+
+        try:
+            error_data = resp.json()
+            message = error_data.get("message", f"Status {resp.status_code}")
+            raise APIError(message, error_data.get("code"))
+        except (ValueError, KeyError):
+            raise APIError(f"throw_proposals failed with status {resp.status_code}")
