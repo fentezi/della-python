@@ -206,9 +206,6 @@ class ParserService:
             fp = cargo_card.fingerprint
             result.total_cards += 1
 
-            if result.total_cards <= 3 and stop_at_id:
-                print(f"[debug]   card#{result.total_cards} fp={fp} city_pair={cargo_card.city_pair} date={cargo_card.date!r} url={cargo_card.url}")
-
             if result.first_card_id is None:
                 result.first_card_id = fp
 

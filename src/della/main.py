@@ -170,11 +170,11 @@ class LardiTransPublisher:
                 except Exception:
                     pass
         except MissingWeightError:
-            print("- пропущено: немає ваги")
-        except TownNotFoundError as e:
-            print(f"- пропущено: місто не знайдено ({e})")
+            pass
+        except TownNotFoundError:
+            pass
         except DuplicateProposalError:
-            print("- пропущено: дублікат")
+            pass
         except InvalidTokenError:
             print("- помилка: невірний токен Lardi")
             self._stop_event.set()
@@ -312,7 +312,6 @@ def main() -> None:
                 last_page_result = None
 
                 checkpoint = app_state.last_request_id
-                print(f"[debug] шукаємо маркер: {checkpoint[:40]}...")
 
                 while True:
                     page_num += 1
@@ -329,21 +328,7 @@ def main() -> None:
                         all_new_cards.extend(page_result.new_cards)
                         all_closed_ids.extend(page_result.closed_card_ids)
 
-                        first_id = page_result.first_card_id or "none"
-                        last_id = page_result.last_card_id or "none"
-                        print(
-                            f"[debug] стор.{page_num}: "
-                            f"карток={page_result.total_cards}, "
-                            f"нових={len(page_result.new_cards)}, "
-                            f"VAT-фільтр={page_result.filtered_by_vat}, "
-                            f"закритих={len(page_result.closed_card_ids)}, "
-                            f"маркер={'ТАК' if page_result.marker_found else 'ні'}"
-                        )
-                        print(f"[debug]   перша: {first_id[:40]}...")
-                        print(f"[debug]   остання: {last_id[:40]}...")
-
                         if page_result.marker_found:
-                            print(f"[debug] маркер знайдено на сторінці {page_num}")
                             marker_found = True
                             if app_state.proposal_count == 0:
                                 break
@@ -351,8 +336,6 @@ def main() -> None:
                         extra_closed = parser_service.collect_closed_ids(content)
                         all_closed_ids.extend(extra_closed)
                         closed_only_pages += 1
-                        if extra_closed:
-                            print(f"[debug] closed-scan стор.{page_num}: закритих={len(extra_closed)}")
                         if closed_only_pages >= CLOSED_SCAN_EXTRA_PAGES:
                             break
 
@@ -362,13 +345,8 @@ def main() -> None:
 
                     if next_url is None:
                         if not marker_found and last_page_result is not None:
-                            print(
-                                f"[debug] маркер НЕ знайдено після {page_num} стор., "
-                                f"всього нових: {len(all_new_cards)}"
-                            )
                             if last_page_result.last_card_id:
                                 app_state.last_request_id = last_page_result.last_card_id
-                                print(f"[debug] новий checkpoint: {last_page_result.last_card_id[:40]}...")
                         break
 
                     current_url = next_url
@@ -376,13 +354,10 @@ def main() -> None:
                 # Оновлення контрольної точки до найновішої нової картки
                 if all_new_cards:
                     app_state.last_request_id = all_new_cards[0].fingerprint
-                    print(f"[debug] checkpoint → {all_new_cards[0].fingerprint}")
 
                 app_state.save()
 
                 # Видалення закритих карток з Lardi-Trans
-                if all_closed_ids:
-                    print(f"[debug] закритих карток на сторінках: {len(all_closed_ids)}")
                 for della_id in all_closed_ids:
                     lardi_id = app_state.get_lardi_id(della_id)
                     if lardi_id is not None and lardi_publisher is not None:
@@ -400,7 +375,6 @@ def main() -> None:
 
                 # Публікація нових карток
                 if all_new_cards:
-                    print(f"[debug] публікуємо {len(all_new_cards)} нових карток")
                     card_storage.add_cards(all_new_cards)
                     if lardi_publisher:
                         lardi_publisher.publish(all_new_cards)
