@@ -29,6 +29,7 @@ from della.storage import AppState, CardStorage
 POLL_INTERVAL_MIN = 120  # мінімальний інтервал
 POLL_INTERVAL_MAX = 160  # максимальний інтервал
 CLOSED_SCAN_EXTRA_PAGES = 15  # скільки сторінок сканувати після маркера (тільки закриті)
+CHECKPOINT_FALLBACK_SIZE = 10  # глибина ланцюга fallback checkpoint'ів
 
 
 class LardiTransPublisher:
@@ -286,7 +287,7 @@ def main() -> None:
         # Нові картки не публікуємо — тільки відстежуємо закриті через proposal_map
         print("Оновлення контрольної точки...")
         content = http_client.get(str(cfg.url))
-        first_result = parser_service.parse_page_cards(content, "")
+        first_result = parser_service.parse_page_cards(content, [])
         checkpoint = first_result.first_card_id
         if checkpoint:
             app_state.last_request_id = checkpoint
@@ -312,6 +313,7 @@ def main() -> None:
                 last_page_result = None
 
                 checkpoint = app_state.last_request_id
+                stop_ids = [checkpoint] + app_state.checkpoint_fallbacks
 
                 while True:
                     page_num += 1
@@ -322,7 +324,7 @@ def main() -> None:
 
                     if not marker_found:
                         page_result = parser_service.parse_page_cards(
-                            content, checkpoint
+                            content, stop_ids
                         )
                         last_page_result = page_result
                         all_new_cards.extend(page_result.new_cards)
@@ -344,16 +346,26 @@ def main() -> None:
                     )
 
                     if next_url is None:
-                        if not marker_found and last_page_result is not None:
-                            if last_page_result.last_card_id:
-                                app_state.last_request_id = last_page_result.last_card_id
                         break
 
                     current_url = next_url
 
-                # Оновлення контрольної точки до найновішої нової картки
-                if all_new_cards:
-                    app_state.last_request_id = all_new_cards[0].fingerprint
+                if not marker_found:
+                    # Жоден checkpoint з ланцюга не знайдено — всі зникли з сайту.
+                    # Не публікуємо. Скидаємо checkpoint і очищуємо застарілий ланцюг.
+                    if all_new_cards:
+                        app_state.last_request_id = all_new_cards[0].fingerprint
+                        print(f"Маркер не знайдено, скидання checkpoint до {app_state.last_request_id[:20]}...")
+                    app_state.checkpoint_fallbacks = []
+                    all_new_cards = []
+
+                # Оновлення контрольної точки і ланцюга fallbacks
+                elif all_new_cards:
+                    new_checkpoint = all_new_cards[0].fingerprint
+                    if new_checkpoint != checkpoint:
+                        new_fallbacks = ([checkpoint] + app_state.checkpoint_fallbacks)[:CHECKPOINT_FALLBACK_SIZE]
+                        app_state.checkpoint_fallbacks = new_fallbacks
+                    app_state.last_request_id = new_checkpoint
 
                 app_state.save()
 

@@ -33,6 +33,7 @@ class PageParseResult:
     new_cards: List[CargoCard] = field(default_factory=list)
     closed_card_ids: List[str] = field(default_factory=list)
     marker_found: bool = False
+    matched_stop_id: Optional[str] = None
     first_card_id: Optional[str] = None
     last_card_id: Optional[str] = None
     total_cards: int = 0
@@ -172,26 +173,29 @@ class ParserService:
         )
 
     def parse_page_cards(
-        self, html_content: bytes, stop_at_id: str
+        self, html_content: bytes, stop_at_ids: List[str]
     ) -> PageParseResult:
         """Parse one page, collecting new cards and closed card IDs.
 
         Iterates all .request_card elements in page order (newest first).
-        Stops collecting new cards once stop_at_id is found (the marker),
-        but continues scanning remaining elements for closed card IDs.
+        Stops collecting new cards once any ID from stop_at_ids is found
+        (the marker), but continues scanning remaining elements for closed
+        card IDs.
 
         Args:
             html_content: Raw HTML bytes for one page.
-            stop_at_id: The request_id of the last known card (checkpoint).
-                        Pass "" on first run to collect all cards.
+            stop_at_ids: Ordered list of checkpoint fingerprints to stop at.
+                         The first one found on the page is used as the marker.
+                         Pass [] on first run to collect all cards.
 
         Returns:
             PageParseResult with new_cards, closed_card_ids,
-            marker_found flag, first_card_id, and last_card_id.
+            marker_found flag, matched_stop_id, first_card_id, and last_card_id.
         """
         soup = BeautifulSoup(html_content, "lxml")
         result = PageParseResult()
 
+        stop_set = {s for s in stop_at_ids if s}
         card_elements = soup.select(".request_card")
         past_marker = False
 
@@ -211,8 +215,9 @@ class ParserService:
 
             result.last_card_id = fp
 
-            if fp == stop_at_id:
+            if not past_marker and fp in stop_set:
                 result.marker_found = True
+                result.matched_stop_id = fp
                 past_marker = True
                 if cargo_card.is_closed:
                     result.closed_card_ids.append(fp)

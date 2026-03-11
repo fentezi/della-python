@@ -3,7 +3,7 @@
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 class AppState:
@@ -18,6 +18,7 @@ class AppState:
         self._lock = threading.RLock()
         self._state_file = state_file
         self._last_request_id: str = ""
+        self._checkpoint_fallbacks: List[str] = []
         self._proposal_map: Dict[str, int] = {}  # della_id -> lardi_id
 
     def load(self) -> None:
@@ -29,6 +30,9 @@ class AppState:
             data = json.loads(raw)
             with self._lock:
                 self._last_request_id = data.get("last_request_id", "")
+                self._checkpoint_fallbacks = [
+                    str(v) for v in data.get("checkpoint_fallbacks", [])
+                ]
                 self._proposal_map = {
                     str(k): int(v)
                     for k, v in data.get("proposal_map", {}).items()
@@ -41,6 +45,7 @@ class AppState:
         with self._lock:
             data = {
                 "last_request_id": self._last_request_id,
+                "checkpoint_fallbacks": list(self._checkpoint_fallbacks),
                 "proposal_map": dict(self._proposal_map),
             }
         try:
@@ -63,6 +68,17 @@ class AppState:
     def last_request_id(self, value: str) -> None:
         with self._lock:
             self._last_request_id = value
+
+    @property
+    def checkpoint_fallbacks(self) -> List[str]:
+        """Ordered list of fallback checkpoint IDs (newest first)."""
+        with self._lock:
+            return list(self._checkpoint_fallbacks)
+
+    @checkpoint_fallbacks.setter
+    def checkpoint_fallbacks(self, value: List[str]) -> None:
+        with self._lock:
+            self._checkpoint_fallbacks = list(value)
 
     def add_proposal(self, della_id: str, lardi_id: int) -> None:
         """Record a published proposal mapping."""
